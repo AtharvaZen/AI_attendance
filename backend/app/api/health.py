@@ -66,6 +66,7 @@ async def health(
         model=settings.face_model_name,
         providers=face_service.providers,
         match_threshold=settings.face_match_threshold,
+        match_margin=settings.face_match_margin,
         environment=settings.environment,
         storage_backend=repository.backend,
         database_connected=connected,

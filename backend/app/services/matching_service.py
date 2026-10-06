@@ -11,9 +11,14 @@ scores are not calibrated probabilities, and the same score means different
 things for different cameras, lighting and populations. Call it a
 *confidence/similarity score* in any UI or report.
 
-The accept/reject decision is a single configurable threshold
-(``FACE_MATCH_THRESHOLD``) that must be tuned on your own data (see
-``scripts/evaluate_recognition.py``).
+The accept/reject decision has two configurable gates, both tuned on your own
+data (see ``scripts/evaluate_recognition.py``):
+
+1. ``FACE_MATCH_THRESHOLD`` - the best cosine similarity must clear it.
+2. ``FACE_MATCH_MARGIN`` - the lead of the best candidate over the best
+   candidate from a *different* student must clear it, so a look-alike who
+   scores 0.51 while the runner-up scores 0.49 is reported as UNKNOWN
+   instead of being accepted.
 """
 
 from __future__ import annotations
@@ -38,7 +43,8 @@ class FaceMatch:
     similarity: float
     #: Best similarity belonging to a *different* student (identification margin).
     runner_up_similarity: float | None
-    #: True when ``similarity >= threshold`` and a student was resolved.
+    #: True when ``similarity >= threshold``, the margin over the runner-up is
+    #: ``>= face_match_margin``, and a student was resolved.
     accepted: bool
 
     @property
@@ -46,6 +52,22 @@ class FaceMatch:
         if self.runner_up_similarity is None:
             return None
         return self.similarity - self.runner_up_similarity
+
+
+@dataclass(slots=True)
+class IdentificationResult:
+    """Everything one identification pass produced.
+
+    ``matches`` keeps its historical meaning: the accepted faces after
+    same-student deduplication, best-scoring first. ``all_matches`` carries
+    **every** detected face in original order (accepted, rejected, unknown)
+    so callers can expose per-face scores/margins in responses and logs.
+    """
+
+    matches: list[FaceMatch]
+    all_matches: list[FaceMatch]
+    unknown: int
+    duplicates: int
 
 
 class MatchingService:
@@ -57,11 +79,14 @@ class MatchingService:
         threshold: float | None = None,
         class_name: str | None = None,
         section: str | None = None,
+        margin: float | None = None,
     ) -> None:
         self._repository = repository
         self._threshold = (
             settings.face_match_threshold if threshold is None else threshold
         )
+        # Minimum lead over the best *other* student. 0 = gate disabled.
+        self._margin = settings.face_match_margin if margin is None else margin
         # When set, candidates are restricted to that class *inside* the search,
         # so a face can never be matched against another class's students.
         self._class_name = class_name
@@ -70,6 +95,10 @@ class MatchingService:
     @property
     def threshold(self) -> float:
         return self._threshold
+
+    @property
+    def margin_threshold(self) -> float:
+        return self._margin
 
     def match_face(self, face: DetectedFace) -> FaceMatch:
         """Find the closest registered student for a single detected face."""
@@ -97,28 +126,54 @@ class MatchingService:
         )
 
         student = self._repository.get_student(best_face.student_id)
-        accepted = student is not None and best_similarity >= self._threshold
+        # Two gates: (1) absolute similarity threshold, (2) identification
+        # margin over the best candidate from a *different* student. Without
+        # gate (2) a look-alike can pass the threshold alone (e.g. 0.51 vs a
+        # runner-up of 0.49) and be wrongly accepted as a registered student.
+        margin_ok = runner_up is None or (
+            best_similarity - runner_up >= self._margin
+        ) or self._margin <= 0.0
+        accepted = (
+            student is not None
+            and best_similarity >= self._threshold
+            and margin_ok
+        )
+
+        margin_value = (
+            None if runner_up is None else best_similarity - runner_up
+        )
+        if student is not None and best_similarity >= self._threshold and not margin_ok:
+            reason = "below_margin"
+        elif student is None:
+            reason = "student_unavailable"
+        elif best_similarity < self._threshold:
+            reason = "below_threshold"
+        else:
+            reason = "match"
 
         logger.info(
-            "Face match: similarity=%.4f threshold=%.2f margin=%s accepted=%s student_id=%s",
+            "Face match: similarity=%.4f threshold=%.2f runner_up=%s margin=%s "
+            "margin_threshold=%.2f decision=%s student_id=%s",
             best_similarity,
             self._threshold,
-            "n/a" if runner_up is None else f"{best_similarity - runner_up:.4f}",
-            accepted,
-            student.id if student else None,
+            "n/a" if runner_up is None else f"{runner_up:.4f}",
+            "n/a" if margin_value is None else f"{margin_value:.4f}",
+            self._margin,
+            reason,
+            student.id if accepted and student else None,
         )
         return FaceMatch(face, student if accepted else None, best_similarity, runner_up, accepted)
 
     def match_faces(self, faces: list[DetectedFace]) -> list[FaceMatch]:
         return [self.match_face(face) for face in faces]
 
-    def identify(
-        self, faces: list[DetectedFace]
-    ) -> tuple[list[FaceMatch], int, int]:
-        """Split matches into ``(accepted_matches, unknown_count, duplicate_count)``.
+    def identify(self, faces: list[DetectedFace]) -> IdentificationResult:
+        """Run matching for a photo and split the results.
 
         A student detected more than once keeps only their best-scoring
-        occurrence; the extra occurrences are counted as duplicates.
+        occurrence; the extra occurrences are counted as duplicates. Faces
+        rejected by the threshold or margin gates are counted as unknown.
+        ``all_matches`` preserves every per-face outcome for responses/logs.
         """
         matches = self.match_faces(faces)
 
@@ -139,4 +194,9 @@ class MatchingService:
                 duplicates += 1
 
         ordered = sorted(best_by_student.values(), key=lambda m: m.similarity, reverse=True)
-        return ordered, unknown, duplicates
+        return IdentificationResult(
+            matches=ordered,
+            all_matches=matches,
+            unknown=unknown,
+            duplicates=duplicates,
+        )

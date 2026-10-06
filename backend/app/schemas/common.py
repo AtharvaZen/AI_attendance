@@ -52,6 +52,14 @@ class HealthResponse(BaseModel):
     match_threshold: float = Field(
         description="Configured cosine-similarity acceptance threshold (not a probability)."
     )
+    match_margin: float = Field(
+        default=0.0,
+        description=(
+            "Configured identification margin (FACE_MATCH_MARGIN): the minimum "
+            "lead over the best other student required for acceptance. 0 disables "
+            "the gate."
+        ),
+    )
     environment: str
     storage_backend: str = Field(
         default="unknown", description="`mongodb` or `memory`."

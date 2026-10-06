@@ -140,7 +140,9 @@ def main(argv: list[str] | None = None) -> int:
         f"{repository.count_embeddings()} embeddings total"
     )
 
-    images = [Path(args.image)] if args.image else _images(Path(args.attendance_dir))
+    # Resolve so `--image test_data/...` (relative) works with the
+    # relative_to(BACKEND_DIR) print below - previously it crashed.
+    images = [Path(args.image).resolve()] if args.image else _images(Path(args.attendance_dir))
     if not images:
         print(f"No images found in {args.attendance_dir}. Run the demo dataset script.")
         return 1

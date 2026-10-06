@@ -149,7 +149,7 @@ POST /api/students                        (admin key)
          └─ id = counters.find_one_and_update({_id:"student"}, {$inc:{value:1}})
          └─ insert into students  (unique index on schoolId+rollNumber enforces safety)
 
-POST /api/students/{id}/faces             (admin key)   × 3–5 times
+POST /api/students/{id}/faces             (admin key)   × 3–10 times
   │
   ├─ _writable_student  → exists? under FACES_PER_STUDENT_MAX?
   ├─ dependencies.read_image_upload
@@ -213,8 +213,12 @@ POST /api/recognition/recognize           (teacher key)
          │
          ├─ best = candidates[0]
          ├─ runner-up = best score from a DIFFERENT student
-         ├─ accepted = best_similarity >= FACE_MATCH_THRESHOLD (0.45)
-         │      below threshold → student = None → counted as UNKNOWN
+         ├─ gate 1: best_similarity >= FACE_MATCH_THRESHOLD (0.45)
+         ├─ gate 2: (best - runner-up) >= FACE_MATCH_MARGIN (0.05)
+         │      either gate failing → student = None → counted as UNKNOWN
+         │      (a 0.51-vs-0.49 look-alike is NOT accepted)
+         ├─ every face keeps its scores/margin/decision in `match_details`
+         │      (exposed in the response + logs for auditing)
          └─ one entry per student (best-scoring face wins;
             extra appearances counted as duplicates)
 
@@ -416,6 +420,7 @@ School isolation: 20/20 generated queries carry a schoolId filter
 | How big is an embedding? | 512 floats, verified from the ONNX output graph |
 | What does "confidence" mean? | Cosine similarity — **not** a probability |
 | Which threshold? | `FACE_MATCH_THRESHOLD`, default `0.45` |
+| Which margin? | `FACE_MATCH_MARGIN`, default `0.05` — minimum lead over the best other student |
 | Is Docker used? | **No.** No `docker-compose.yml`, no `Dockerfile` |
 | What if MongoDB is down? | Startup fails fast rather than running half-configured |
 | Does recognition modify data? | **No** — strictly read-only |

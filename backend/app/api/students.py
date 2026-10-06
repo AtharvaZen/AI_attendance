@@ -275,7 +275,8 @@ async def _writable_student(
         "* zero faces -> `no_face_detected`;\n"
         "* more than one face -> `multiple_faces_detected`;\n"
         "* a face smaller than `FACE_MIN_FACE_SIZE` -> `face_too_small`;\n"
-        "* a photo too similar to one already stored -> `duplicate_face`.\n\n"
+        "* a photo too similar to one already stored -> `duplicate_face`;\n"
+        "* a photo that is clearly ANOTHER student's face -> `duplicate_face`.\n\n"
         f"Store {settings.faces_per_student_min}-{settings.faces_per_student_max} "
         "photos per student for reliable recognition. The raw image is processed in "
         "memory and is never written to disk."
@@ -311,6 +312,25 @@ async def upload_student_face(
                 f"This photo is {similarity:.2f} similar to an existing registration "
                 f"photo (>= {settings.duplicate_face_similarity}). Upload a different "
                 "pose, expression, angle or lighting condition."
+            )
+
+    # Guard against registering ANOTHER student's face under this record: a
+    # near-identical match to a different student's stored embedding means the
+    # photo almost certainly belongs to that person, not this student.
+    other = repository.search_similar(
+        registration.embedding,
+        limit=1,
+        exclude_student_id=student.id,
+    )
+    if other:
+        other_face, other_similarity = other[0]
+        if other_similarity >= settings.duplicate_face_similarity:
+            raise DuplicateFaceError(
+                f"This photo is {other_similarity:.2f} similar (>= "
+                f"{settings.duplicate_face_similarity}) to a photo already "
+                f"registered for another student (id {other_face.student_id}). "
+                "It appears to be the wrong person - upload the correct "
+                "student's photo."
             )
 
     record = repository.add_face(

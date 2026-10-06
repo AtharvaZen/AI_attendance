@@ -62,12 +62,12 @@ The product is a two-tier web application: a **FastAPI** backend and a
 - Deleting a student also deletes their embeddings and attendance rows.
 
 ### 4.2 Face Registration
-- Upload a single photo per request; 3–5 photos per student is recommended.
+- Upload a single photo per request; 3–10 photos per student is recommended.
 - Enforced registration rules:
   - exactly **one** face in the photo (0 → error, 2+ → error),
   - face must be at least `FACE_MIN_FACE_SIZE` (60px) on its smaller side,
   - a photo too similar to one already stored is rejected (`duplicate_face`),
-  - hard maximum of `FACES_PER_STUDENT_MAX` (5) embeddings per student.
+  - hard maximum of `FACES_PER_STUDENT_MAX` (10) embeddings per student.
 - **Embeddings are stored. Raw images are never written to disk** — they are
   processed in memory and discarded.
 
@@ -76,6 +76,11 @@ The product is a two-tier web application: a **FastAPI** backend and a
 - Each embedding is matched against that school's stored embeddings.
 - Faces below the threshold are reported as **unknown** — the system never
   guesses the nearest student.
+- A face is accepted only when it clears **both** gates: the similarity
+  threshold *and* the identification margin over the best other student
+  (see §11).
+- Every detection's best score, runner-up, margin and decision are returned
+  as `match_details` for auditing/debugging.
 - **Recognition never writes attendance** (a deliberate safety separation).
 
 ### 4.4 Attendance Processing
@@ -319,15 +324,16 @@ hard-coded; **`.env` is gitignored and must never be committed**.
 | `UPLOAD_DIR` | `uploads` | Temporary upload directory |
 | `MAX_UPLOAD_SIZE_MB` | `10` | Upload size limit |
 | `FACE_MATCH_THRESHOLD` | `0.45` | Cosine accept threshold (not a probability) |
+| `FACE_MATCH_MARGIN` | `0.05` | Minimum lead over the best other student (0 = gate off) |
 | `FACE_MODEL_NAME` | `buffalo_l` | Model package |
 | `FACE_MODEL_ROOT` | `~/.insightface` | Weight cache location |
 | `FACE_DET_SIZE` | `640` | Detector input size |
 | `FACE_DET_THRESH` | `0.5` | Detector confidence floor |
 | `FACE_MIN_FACE_SIZE` | `60` | Minimum face size in px |
 | `FACE_PROVIDERS` | *(auto)* | Force an ONNX execution provider |
-| `RECOGNITION_CANDIDATES` | `5` | Embeddings fetched per detected face |
+| `RECOGNITION_CANDIDATES` | `15` | Embeddings fetched per detected face |
 | `MAX_FACES_PER_IMAGE` | `300` | Hard cap on faces per photo |
-| `FACES_PER_STUDENT_MIN` / `MAX` | `3` / `5` | Recommended / maximum photos per student |
+| `FACES_PER_STUDENT_MIN` / `MAX` | `3` / `10` | Recommended / maximum photos per student |
 | `DUPLICATE_FACE_SIMILARITY` | `0.98` | Re-upload guard (keep very high) |
 ---
 
@@ -340,9 +346,15 @@ two face embeddings". It does **not** mean "93% probability this is that
 student". Similarity scores are not calibrated, and the same score means
 different things under different cameras, lighting and populations.
 
-Accept/reject is a **single configurable threshold** (`FACE_MATCH_THRESHOLD`).
-The useful range is roughly 0.35–0.60 and must be tuned on your own data — the
-default 0.45 is a starting point, not a production value.
+Accept/reject uses **two configurable gates**: the similarity threshold
+(`FACE_MATCH_THRESHOLD`) *and* the identification margin
+(`FACE_MATCH_MARGIN`), which requires the winner to lead the best candidate
+from a *different* student by a minimum gap — a look-alike scoring 0.51 while
+the runner-up scores 0.49 is reported as unknown, not accepted. Both are tuned
+on your own data (`scripts/evaluate_recognition.py`); the defaults 0.45 and
+0.05 are starting points, not production values. Every detection's raw
+scores (best, runner-up, margin, decision) are exposed in the recognition
+response as `match_details` so decisions can be audited.
 
 ---
 

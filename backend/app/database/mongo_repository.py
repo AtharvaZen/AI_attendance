@@ -400,7 +400,11 @@ class MongoAttendanceRepository(AttendanceRepository):
 
         results: list[tuple[FaceRecord, float]] = []
         for doc in docs:
-            similarity = 1.0 - float(doc.get("score", 0.0))  # cosine distance
+            # For `"similarity": "cosine"` MongoDB Atlas returns `score` as the
+            # cosine SIMILARITY (1.0 = identical, higher = more similar), NOT a
+            # distance - so use it directly. Verified against Atlas docs; the
+            # old `1.0 - score` inversion rejected the best matches outright.
+            similarity = float(doc.get("score", 0.0))
             results.append((self._to_face(doc), similarity))
         results.sort(key=lambda pair: pair[1], reverse=True)
         return results

@@ -67,6 +67,7 @@ Key variables:
 | `EMBEDDING_DIM` | `512` | face-embedding vector length (matches `buffalo_l`) |
 | `UPLOAD_DIR` | `uploads` | where temporary uploads are written |
 | `FACE_MATCH_THRESHOLD` | `0.45` | cosine-similarity accept threshold |
+| `FACE_MATCH_MARGIN` | `0.05` | minimum lead over the best *other* student (0 = off) |
 | `FACE_MODEL_NAME` | `buffalo_l` | InsightFace model package |
 | `FACE_DET_SIZE` | `640` | detector input size |
 | `FACE_MIN_FACE_SIZE` | `60` | reject faces smaller than N px |

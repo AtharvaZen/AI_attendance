@@ -14,7 +14,7 @@ from datetime import date
 
 import numpy as np
 
-from app.database.records import STATUS_ABSENT, STATUS_PRESENT
+from app.database.records import STATUS_ABSENT, STATUS_PRESENT, AttendanceRecord
 from app.database.repository import AttendanceRepository
 from app.services.embedding_service import EmbeddingService, embedding_service
 from app.services.matching_service import MatchingService
@@ -146,7 +146,10 @@ class AttendanceService:
         matcher = MatchingService(
             self._repository, class_name=class_name, section=section
         )
-        matches, unknown, duplicates = matcher.identify(faces)
+        identification = matcher.identify(faces)
+        matches = identification.matches
+        unknown = identification.unknown
+        duplicates = identification.duplicates
 
         entries: list[RecognizedEntry] = []
         already_present = 0
@@ -277,7 +280,9 @@ class AttendanceService:
                 )
             )
         roster.sort(key=lambda r: r.roll_number)
-def confirm(
+        return roster
+
+    def confirm(
         self,
         *,
         class_name: str,
@@ -368,4 +373,3 @@ def confirm(
             already_present=len(already),
             records=written,
         )
-        return roster
